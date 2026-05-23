@@ -46,6 +46,11 @@
       align-items: start;
     }
 
+    .layout > main {
+      grid-column: 2;
+      min-width: 0;
+    }
+
     .toc {
       position: fixed;
       left: max(16px, calc((100vw - 1280px) / 2 + 16px));
@@ -386,6 +391,10 @@
     @media (max-width: 820px) {
       .layout, .status-grid, .grid-2, .grid-3, .step, .scoreline {
         grid-template-columns: 1fr;
+      }
+
+      .layout > main {
+        grid-column: auto;
       }
 
       .toc {
