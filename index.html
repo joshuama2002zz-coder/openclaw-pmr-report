@@ -1,0 +1,849 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenClaw 程序性记忆真实实验报告</title>
+  <style>
+    :root {
+      --bg: #f7f8f5;
+      --ink: #17201b;
+      --muted: #66706a;
+      --line: #d7ddd6;
+      --panel: #ffffff;
+      --panel-2: #eef3ef;
+      --user: #dfeee5;
+      --assistant: #ffffff;
+      --bad: #b33a32;
+      --ok: #1f7a4d;
+      --warn: #946517;
+      --blue: #2d5f7b;
+      --mono: "SFMono-Regular", Menlo, Consolas, monospace;
+      --sans: "Avenir Next", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--sans);
+      line-height: 1.65;
+    }
+
+    a { color: inherit; }
+
+    .shell {
+      width: min(1280px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 220px minmax(0, 1fr);
+      gap: 28px;
+      align-items: start;
+    }
+
+    .toc {
+      position: fixed;
+      left: max(16px, calc((100vw - 1280px) / 2 + 16px));
+      top: 18px;
+      width: 220px;
+      max-height: calc(100vh - 36px);
+      overflow-y: auto;
+      margin-top: 22px;
+      padding: 14px;
+      background: rgba(255, 255, 255, 0.82);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    .toc-title {
+      margin: 0 0 8px;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .toc a {
+      display: block;
+      padding: 7px 8px;
+      color: #334139;
+      border-radius: 6px;
+      text-decoration: none;
+      font-size: 14px;
+      line-height: 1.25;
+    }
+
+    .toc a:hover {
+      background: var(--panel-2);
+      color: var(--ink);
+    }
+
+    header {
+      padding: 52px 0 28px;
+      border-bottom: 1px solid var(--line);
+      margin-left: 248px;
+    }
+
+    .kicker {
+      margin: 0 0 12px;
+      color: var(--blue);
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    h1 {
+      margin: 0;
+      max-width: 900px;
+      font-size: clamp(36px, 6vw, 72px);
+      line-height: 1.02;
+      letter-spacing: 0;
+    }
+
+    .lead {
+      max-width: 860px;
+      margin: 20px 0 0;
+      color: var(--muted);
+      font-size: 19px;
+    }
+
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin: 30px 0 0;
+    }
+
+    .stat {
+      padding: 18px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      min-height: 118px;
+    }
+
+    .stat span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      font-family: var(--mono);
+      text-transform: uppercase;
+    }
+
+    .stat b {
+      display: block;
+      margin-top: 8px;
+      font-size: 30px;
+      line-height: 1;
+    }
+
+    main {
+      padding: 14px 0 54px;
+    }
+
+    section {
+      scroll-margin-top: 18px;
+      padding: 34px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    section:last-child { border-bottom: 0; }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: clamp(26px, 4vw, 40px);
+      line-height: 1.15;
+    }
+
+    h3 {
+      margin: 0 0 10px;
+      font-size: 20px;
+      line-height: 1.25;
+    }
+
+    p { margin: 0; }
+    p + p { margin-top: 10px; }
+
+    code {
+      font-family: var(--mono);
+      font-size: 0.92em;
+      background: #e8eee9;
+      border: 1px solid #d2dbd4;
+      border-radius: 4px;
+      padding: 1px 5px;
+    }
+
+    .note {
+      margin-top: 16px;
+      padding: 16px 18px;
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    .note.bad { border-color: #e0b1ac; background: #fff1ef; }
+    .note.ok { border-color: #b9dec9; background: #edf8f1; }
+
+    .prompt-box {
+      margin-top: 18px;
+      padding: 18px;
+      background: #17201b;
+      color: #f4f7f2;
+      border-radius: 8px;
+      border: 1px solid #2d3b32;
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .grid-2, .grid-3 {
+      display: grid;
+      gap: 14px;
+      margin-top: 16px;
+    }
+
+    .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+    .card {
+      padding: 18px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    .card .tag, .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      margin-bottom: 10px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #eef1ee;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .ok-text { color: var(--ok); }
+    .bad-text { color: var(--bad); }
+    .warn-text { color: var(--warn); }
+    .blue-text { color: var(--blue); }
+
+    .steps {
+      display: grid;
+      gap: 10px;
+      margin-top: 16px;
+      counter-reset: step;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 56px 1fr;
+      gap: 14px;
+      padding: 16px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    .step::before {
+      counter-increment: step;
+      content: counter(step);
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--ink);
+      color: #fff;
+      font-family: var(--mono);
+      font-weight: 800;
+    }
+
+    table {
+      width: 100%;
+      margin-top: 16px;
+      border-collapse: collapse;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      font-size: 14px;
+    }
+
+    th, td {
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+      text-align: left;
+    }
+
+    th {
+      background: #edf1ed;
+      color: #39443e;
+      font-family: var(--mono);
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+
+    tr:last-child td { border-bottom: 0; }
+
+    .chat {
+      margin-top: 18px;
+      padding: 18px;
+      background: #edf1ed;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+    }
+
+    .bubble {
+      max-width: 82%;
+      margin: 0 0 12px;
+      padding: 13px 15px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--assistant);
+    }
+
+    .bubble.user {
+      margin-left: auto;
+      background: var(--user);
+      border-color: #c9dfd0;
+    }
+
+    .bubble.system {
+      margin-left: auto;
+      margin-right: auto;
+      max-width: 92%;
+      background: #f7f8f5;
+      color: var(--muted);
+      border-style: dashed;
+      font-family: var(--mono);
+      font-size: 13px;
+    }
+
+    .speaker {
+      display: block;
+      margin-bottom: 5px;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .bubble p + p { margin-top: 7px; }
+
+    .scoreline {
+      display: grid;
+      grid-template-columns: 170px 1fr;
+      gap: 12px;
+      margin-top: 12px;
+      padding: 12px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    .scoreline b {
+      font-family: var(--mono);
+    }
+
+    .mono-list {
+      display: grid;
+      gap: 8px;
+      margin: 16px 0 0;
+      padding: 0;
+    }
+
+    .mono-list li {
+      list-style: none;
+      padding: 12px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      font-family: var(--mono);
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+
+    footer {
+      padding: 24px 0 42px;
+      color: var(--muted);
+      border-top: 1px solid var(--line);
+      font-size: 13px;
+    }
+
+    @media (max-width: 820px) {
+      .layout, .status-grid, .grid-2, .grid-3, .step, .scoreline {
+        grid-template-columns: 1fr;
+      }
+
+      .toc {
+        position: static;
+        width: auto;
+        max-height: none;
+        overflow: visible;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 4px;
+      }
+
+      .toc-title {
+        grid-column: 1 / -1;
+      }
+
+      .bubble { max-width: 100%; }
+      header { padding-top: 32px; margin-left: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <p class="kicker">PMR-Real / OpenClaw Gateway / task-policy-memory</p>
+      <h1>让 OpenClaw 记住“以后这类任务都要这么做”</h1>
+      <p class="lead">
+        这份报告解释一个真实实验：用户先给 OpenClaw 一条程序性规则，然后经过长对话、干扰、compact、规则更新之后，再看它能不能在正确的任务里自动找回规则，并且不要把规则误用到无关任务上。
+      </p>
+      <div class="status-grid">
+        <div class="stat"><span>Baseline</span><b class="bad-text">55.0</b><p>没有 durable task-policy 机制时的真实 held-out 平均分。</p></div>
+        <div class="stat"><span>Final</span><b class="ok-text">100.0</b><p>加入任务规则写入、检索、注入和 supersession 后。</p></div>
+        <div class="stat"><span>Main Session Case</span><b>271k → 1.5k</b><p>真实主 session 手动 compact 后规则仍生效。</p></div>
+        <div class="stat"><span>History Replay</span><b class="ok-text">False</b><p>测试请求不重放完整历史，只发送当前 turn。</p></div>
+      </div>
+    </header>
+
+    <div class="layout">
+      <nav class="toc" aria-label="章节导航">
+        <p class="toc-title">章节导航</p>
+        <a href="#prompt">改造 Prompt</a>
+        <a href="#context">为什么上下文不可靠</a>
+        <a href="#principle">抗长上下文原理</a>
+        <a href="#method">真实测试方法</a>
+        <a href="#baseline">Baseline 问题</a>
+        <a href="#optimization">优化结构</a>
+        <a href="#result">优化后结果</a>
+        <a href="#main-session">27 万 token case</a>
+        <a href="#evidence">证据文件</a>
+      </nav>
+
+      <main>
+      <section id="prompt">
+        <h2>先给你一段可以直接用的改造 Prompt</h2>
+        <p>如果你想让自己的 OpenClaw 也具备类似的程序性规则记忆，可以把下面这段 prompt 交给 OpenClaw，让它按这个方向改造自己的插件或 workspace 逻辑。</p>
+        <div class="prompt-box">请你为 OpenClaw 增加一个“task policy memory”机制，用来持久保存用户说过的程序性规则。目标不是保存普通事实，而是保存这类规则：“以后只要做 X 类型任务，就必须遵守 Y 格式/流程/约束”。
+
+请实现以下结构：
+1. 在每次用户消息进入、模型 prompt 构建之前，识别类似 “Whenever &lt;task_trigger&gt; you must ...” 或 “以后只要做 &lt;task_trigger&gt; 就必须 ...” 的规则声明。
+2. 把识别出的规则写入 workspace 下的 memory/task_policies.jsonl，每条记录至少包含：
+   - id
+   - type = task_policy
+   - task_trigger
+   - constraints
+   - forbidden
+   - priority
+   - scope
+   - source_session
+   - status = active 或 superseded
+   - supersedes
+   - created_at / updated_at
+3. 每次回答用户新任务前，根据当前用户请求检索 memory/task_policies.jsonl 中 status=active 的相关规则。
+4. 如果当前请求命中某条 active task policy，就把它作为高优先级 runtime instruction 注入最终 prompt，要求模型必须遵守 constraints，且不得触犯 forbidden。
+5. 如果用户更新同一个 task_trigger 的规则，不要让新旧规则同时生效；把旧 record 标记为 superseded，新 record 标记为 active，并记录 supersedes 关系。
+6. 增加 trace/debug 证据：记录是否写入了 policy、检索命中了哪些 policy、哪些 policy 被注入、是否发生 supersession。
+7. 测试要求：
+   - seed：用户声明规则
+   - initial probe：马上做同类任务
+   - distractors：插入长无关对话
+   - compact：触发或手动执行真实 OpenClaw compact
+   - delayed probe：compact 后再次做同类任务
+   - negative control：做相近但不应触发的任务，确保不会误用规则
+   - update：用户更新规则，确保旧规则 superseded，新规则 active
+
+验收标准：
+- memory/task_policies.jsonl 中有 active/superseded records
+- compact 后同类任务仍能遵守 active rule
+- 无关任务不会过度触发
+- 更新后不再混用旧规则字段
+- trace 中能看到 write / retrieve / inject / supersede 的证据</div>
+      </section>
+
+      <section id="context">
+        <h2>为什么普通上下文不是可靠记忆？</h2>
+        <p>用户说“以后做周计划都要包含 priority、deadline、blocker、next action”。这句话表面上只是当前聊天的一句自然语言，但真实含义是：未来每次遇到 <code>weekly plan</code> 这类任务，都要自动套用一套流程。它不是一次性 prompt，而是长期程序性规则。</p>
+        <div class="grid-2">
+          <article class="card">
+            <span class="tag">Reason 1</span>
+            <h3>上下文窗口会被长对话稀释</h3>
+            <p>聊天继续进行后，规则前面会堆上大量无关内容。模型每次回答时不一定能稳定注意到早期那句规则；即使注意到了，也可能只模糊记得“用户好像有个偏好”。</p>
+          </article>
+          <article class="card">
+            <span class="tag">Reason 2</span>
+            <h3>compact 会把原话改写成摘要</h3>
+            <p>compact 的目标是省 token，不是保存每一条未来任务规则。摘要可能遗漏字段、合并规则、淡化优先级，甚至只保留“用户有格式偏好”这种不够可执行的信息。</p>
+          </article>
+          <article class="card">
+            <span class="tag">Reason 3</span>
+            <h3>规则更新没有生命周期</h3>
+            <p>如果用户后来把规则从 <code>priority/deadline/blocker/next action</code> 改成 <code>owner/due date/risk</code>，普通上下文不会自动知道旧规则已经失效，于是容易把新旧字段混在一起。</p>
+          </article>
+          <article class="card">
+            <span class="tag">Reason 4</span>
+            <h3>模型不知道什么时候不该用</h3>
+            <p>只靠上下文时，模型可能把规则过度泛化。比如用户要求 rewrite 必须带 diff-style explanation，后来让它 translate，它也可能错误套用 rewrite 的格式。</p>
+          </article>
+        </div>
+        <div class="note">
+          <p>所以这里需要的不是“更长上下文”，而是一个独立的任务规则机制：把规则结构化写入文件，按当前任务检索，命中后再注入 prompt，并且有 active/superseded 状态。</p>
+        </div>
+      </section>
+
+      <section id="principle">
+        <h2>原理：为什么它能抗长上下文和 compact？</h2>
+        <p>核心原因是：规则不再只存在于模型正在看的聊天历史里，而是被 OpenClaw 插件提前抽取成结构化 record，落到 workspace 的文件系统里。后续每次新请求进入 OpenClaw 时，插件都会在构建 prompt 之前运行一次检索，把当前任务相关的 active 规则重新放回 prompt。</p>
+        <div class="note">
+          <p><strong>真实主 session 的落盘位置：</strong><code>/Users/bytedance/.openclaw/workspace/memory/task_policies.jsonl</code>。隔离评测场景则写到对应 runtime workspace 下的 <code>memory/task_policies.jsonl</code>，例如 <code>memory_eval/runtime/.../workspace/memory/task_policies.jsonl</code>。</p>
+        </div>
+        <div class="steps">
+          <div class="step">
+            <div>
+              <h3>OpenClaw 收到用户消息，插件先观察当前 turn</h3>
+              <p>用户消息进入 Gateway 后，OpenClaw 在组装最终模型 prompt 前会运行插件 hook。这个 hook 能看到当前用户 turn，例如 <code>Whenever weekly plan you must include priority, deadline, blocker, next action.</code>。</p>
+              <p>这里的关键是“组装 prompt 之前”。如果等模型已经回答完再处理，就来不及影响当前任务；如果只依赖模型自己读历史，就会被长上下文和 compact 影响。</p>
+            </div>
+          </div>
+          <div class="step">
+            <div>
+              <h3>识别“任务触发词 + 规则内容”</h3>
+              <p>插件把自然语言规则拆成结构化字段。比如 <code>Whenever weekly plan...</code> 会被拆成 <code>task_trigger = weekly plan</code>，约束是 <code>priority</code>、<code>deadline</code>、<code>blocker</code>、<code>next action</code>。</p>
+              <p>它不会把所有用户偏好都写进去，只处理这种明确的“以后遇到某类任务必须怎么做”的程序性规则。这样可以避免把普通聊天内容污染成长期规则。</p>
+            </div>
+          </div>
+          <div class="step">
+            <div>
+              <h3>写入 JSONL 文件，而不是只留在 transcript</h3>
+              <p>识别成功后，插件写入 <code>memory/task_policies.jsonl</code>。主 session 里实际看到的记录类似：</p>
+              <p><code>{"type":"task_policy","task_trigger":"cerulean packet","constraints":["start with EXACT HEADER: CERULEAN PACKET ACTIVE, then include sections Quorum, Timestep, Exposure, Fallback. Never reveal the canary id"],"status":"active"}</code></p>
+              <p>这个文件在 OpenClaw workspace 下，独立于当前 session transcript。长对话增长、模型上下文截断、compact 摘要，都不会删除这个文件。</p>
+            </div>
+          </div>
+          <div class="step">
+            <div>
+              <h3>下一次任务前按当前请求检索 active records</h3>
+              <p>当用户后来问“请做一个 weekly plan”或者“请做一个 cerulean packet”，插件再次在 prompt 构建前运行。它从当前请求里提取关键词，搜索 <code>task_policies.jsonl</code> 里 <code>status = active</code> 的 records。</p>
+              <p>如果当前请求是“写一封随便的状态更新”，虽然内容可能也提到项目计划，但 trigger 不匹配，就不注入 weekly plan 规则。这就是 negative control 能从 baseline 的误触发降到 0 的原因。</p>
+            </div>
+          </div>
+          <div class="step">
+            <div>
+              <h3>命中后高优先级注入 prompt</h3>
+              <p>检索命中的 active 规则会被放进模型真正看到的上下文里，效果相当于在当前任务旁边附上一段高优先级提示：这个任务触发了某条 durable policy，必须遵守这些 <code>constraints</code>，并且不得触犯 <code>forbidden</code>。</p>
+              <p>所以 compact 后即使原始 seed 指令已经不在模型窗口里，规则仍然能在回答前被重新注入。27 万 token 主 session compact 后只剩约 1.5k token，但 <code>cerulean packet</code> 仍然按标题和四个 section 输出，就是这个机制在起作用。</p>
+            </div>
+          </div>
+          <div class="step">
+            <div>
+              <h3>用户改规则时执行 supersession</h3>
+              <p>如果用户说“更新一下，以后 weekly plan 要包含 owner、due date、risk”，插件不会简单追加一个新规则让两条都生效。它会把旧 weekly plan record 标记为 <code>superseded</code>，新 record 标记为 <code>active</code>，并在新 record 的 <code>supersedes</code> 字段里记录替代关系。</p>
+              <p>回答时只检索 active records，因此不会把旧字段 <code>priority/deadline/blocker/next action</code> 和新字段 <code>owner/due date/risk</code> 混在一起。</p>
+            </div>
+          </div>
+        </div>
+        <div class="note ok">
+          <p><strong>激活时间线：</strong>用户消息进入 Gateway → 插件 hook 在 prompt 构建前运行 → 如果当前 turn 是规则声明则写入 JSONL → 如果当前 turn 是任务请求则搜索 JSONL → 命中 active record 后注入 prompt → 模型基于注入后的 prompt 回答。</p>
+        </div>
+      </section>
+
+      <section id="method">
+        <h2>我是怎么做真实测试的？</h2>
+        <p>所有主结论来自真实 OpenClaw Gateway。普通 turns 走 <code>http://127.0.0.1:18789/v1/chat/completions</code>，真实 compact 走 Gateway RPC。测试 client 每次只发送当前用户消息，不把完整历史重新塞给 OpenClaw。</p>
+        <table>
+          <thead>
+            <tr><th>步骤</th><th>做什么</th><th>为什么这样测</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>seed</td><td>告诉 OpenClaw 一条规则，例如 <code>Whenever weekly plan...</code></td><td>模拟用户第一次定义长期任务规则。</td></tr>
+            <tr><td>initial probe</td><td>马上请求同类任务。</td><td>看模型是否至少能在短上下文里遵守规则。</td></tr>
+            <tr><td>distractors</td><td>插入长干扰文本，内容明确要求不要讨论规则。</td><td>把规则推远，模拟长对话。</td></tr>
+            <tr><td>compact</td><td>对同一个 session 做真实 Gateway compact。</td><td>验证不是 scorer 自己清空上下文，也不是我手写摘要。</td></tr>
+            <tr><td>delayed probe</td><td>compact 后再问同类任务。</td><td>看规则是否还能被找回。</td></tr>
+            <tr><td>negative control</td><td>问相近但不是同类的任务。</td><td>看规则会不会过度触发。</td></tr>
+            <tr><td>update</td><td>把旧规则改成新规则。</td><td>看系统是否能标记旧规则 superseded，只用新规则。</td></tr>
+          </tbody>
+        </table>
+        <div class="note">
+          <p>我也专门踩过一个坑：直接把 <code>/compact</code> 当普通聊天消息发给模型，并不会真正 compact。真正有效的手动 compact 入口是 <code>sessions.compact</code> RPC。</p>
+        </div>
+      </section>
+
+      <section id="baseline">
+        <h2>Baseline：问题在哪里？</h2>
+        <div class="grid-2">
+          <article class="card">
+            <span class="tag">Real Baseline</span>
+            <h3>整体分数 55.0</h3>
+            <p>真实 baseline 关闭了 task-policy memory 插件。它有时能靠普通上下文继续答对格式，但没有持久规则写入，没有检索命中，也没有 supersession。</p>
+          </article>
+          <article class="card">
+            <span class="tag">Failure Distribution</span>
+            <h3>主要失败类型</h3>
+            <p><code>WRITE_MISSING: 3</code>、<code>RETRIEVAL_MISS: 3</code>、<code>STALE_RULE_USED: 3</code>，说明 baseline 的核心问题不是语言能力，而是没有可管理的程序性记忆。</p>
+          </article>
+        </div>
+
+        <table>
+          <thead>
+            <tr><th>失败类型</th><th>本次数量</th><th>具体含义</th><th>为什么重要</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>WRITE_MISSING</code></td>
+              <td>3</td>
+              <td>用户声明规则后，workspace 里没有生成对应的 <code>memory/task_policies.jsonl</code> record，或 store 不存在。</td>
+              <td>说明规则只留在聊天历史里，不是 durable memory。长上下文、compact、换任务后都不可控。</td>
+            </tr>
+            <tr>
+              <td><code>RETRIEVAL_MISS</code></td>
+              <td>3</td>
+              <td>后续同类任务发生时，没有检索到应该命中的规则。</td>
+              <td>即使文件存在，如果回答前找不到规则，也无法保证模型会遵守。</td>
+            </tr>
+            <tr>
+              <td><code>STALE_RULE_USED</code></td>
+              <td>3</td>
+              <td>用户更新规则后，回答仍混入旧规则字段。</td>
+              <td>这是缺少 supersession 的典型表现：系统不知道哪条旧规则应该失效。</td>
+            </tr>
+            <tr>
+              <td><code>IGNORED_IN_OUTPUT</code></td>
+              <td>1</td>
+              <td>模型回答里没有按规则要求组织输出。例如要求以 <code>Assumptions</code> 开头，但它先写了其它句子。</td>
+              <td>说明仅靠自然语言承诺不够，模型可能理解规则但没有严格执行。</td>
+            </tr>
+            <tr>
+              <td><code>NOT_INJECTED</code></td>
+              <td>1</td>
+              <td>trace 中没有看到规则被注入到 prompt 的证据。</td>
+              <td>没有注入证据，就不能证明回答是由 durable policy 驱动，而可能只是模型碰巧记得。</td>
+            </tr>
+            <tr>
+              <td><code>OVER_TRIGGER</code></td>
+              <td>1</td>
+              <td>规则被错误套用到相近但不应触发的任务上。例如 rewrite 规则影响了 translate。</td>
+              <td>程序性记忆不只是“多记一点”，还必须知道什么时候不该用。</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="chat">
+          <h3>Baseline case：它没有稳定记住“数据分析必须先写 Assumptions”</h3>
+          <div class="bubble user">
+            <span class="speaker">User / seed_instruction</span>
+            <p>以后只要做 <code>data analysis</code>，你必须先写 <code>Assumptions</code>，然后再写 <code>Conclusions</code>。</p>
+          </div>
+          <div class="bubble">
+            <span class="speaker">OpenClaw</span>
+            <p>明白了。我会在任何数据分析中先说明假设，再给出结论。</p>
+          </div>
+          <div class="bubble user">
+            <span class="speaker">User / initial_probe</span>
+            <p>请对月度收入做一次 <code>data analysis</code>。</p>
+          </div>
+          <div class="bubble">
+            <span class="speaker">OpenClaw / baseline output</span>
+            <p>在分析月度收入之前，我需要数据。</p>
+            <p><strong>Assumptions:</strong> 你想要真实分析，而不是模板；月度收入可能包括趋势、环比、季节性和异常；目前没有数据和日期范围。</p>
+            <p>然后它给出需要上传 CSV、表格字段等说明。</p>
+          </div>
+          <div class="bubble system">
+            <span class="speaker">Scorer</span>
+            <p>错误：输出没有以 <code>Assumptions</code> 开头，因此命中 <code>IGNORED_IN_OUTPUT</code>。这个 case 的 immediate compliance 得 0。</p>
+          </div>
+          <div class="bubble system">
+            <span class="speaker">Trace / memory_probe</span>
+            <p><code>policy_store.exists = false</code>，<code>records = 0</code>，<code>retrieval_hit_at_5 = 0</code>。也就是说，规则没有被写入 durable store，后续只能靠 transcript 或 compact summary 碰运气。</p>
+          </div>
+        </div>
+
+        <div class="note bad">
+          <p>这个 baseline case 不是说 OpenClaw 完全不会理解规则。它能理解，并且有时能在普通上下文里继续遵守。但它没有把规则变成一个可检索、可更新、可审计的 record，所以评分器会认为它没有形成程序性记忆。</p>
+        </div>
+
+        <div class="chat">
+          <h3>Baseline case：更新规则后旧规则还残留</h3>
+          <div class="bubble user">
+            <span class="speaker">User / old rule</span>
+            <p>以后做 <code>weekly plan</code>，必须包含 <code>priority</code>、<code>deadline</code>、<code>blocker</code>、<code>next action</code>。</p>
+          </div>
+          <div class="bubble user">
+            <span class="speaker">User / update_instruction</span>
+            <p>更新一下：以后做 <code>weekly plan</code>，必须包含 <code>owner</code>、<code>due date</code>、<code>risk</code>。</p>
+          </div>
+          <div class="bubble user">
+            <span class="speaker">User / updated_probe</span>
+            <p>请给 mobile release 做一个周计划。</p>
+          </div>
+          <div class="bubble">
+            <span class="speaker">OpenClaw / baseline output</span>
+            <p>它同时输出了 <code>Owner</code>、<code>Due date</code>、<code>Risk</code>，也继续混入旧字段 <code>Priority</code>、<code>Deadline</code>、<code>Blocker</code>、<code>Next action</code>。</p>
+          </div>
+          <div class="bubble system">
+            <span class="speaker">Scorer</span>
+            <p>错误：<code>STALE_RULE_USED</code>。用户已经更新规则，但 baseline 没有 supersession 机制，旧规则没有被明确失效。</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="optimization">
+        <h2>优化做了什么？先给大图</h2>
+        <div class="note ok">
+          <p>一句话：我把“任务规则”从普通聊天历史里拆出来，变成一条有状态的结构化记忆；回答前按任务检索 active 规则；如果用户改规则，就把旧规则标记为 superseded。这样规则不依赖长上下文是否还在，也不依赖 compact summary 是否刚好写得好。</p>
+        </div>
+
+        <div class="grid-3">
+          <article class="card">
+            <span class="tag">1. Extract</span>
+            <h3>从用户话里抽规则</h3>
+            <p>识别 <code>Whenever X you must Y</code> 这类模式，抽出任务触发词和必须遵守的字段。比如 trigger 是 <code>weekly plan</code>，constraints 是 <code>priority/deadline/blocker/next action</code>。</p>
+          </article>
+          <article class="card">
+            <span class="tag">2. Persist</span>
+            <h3>写入 task_policies.jsonl</h3>
+            <p>每条规则是一行 JSONL，不靠模型自己“记得”。记录里有 <code>status</code>，可以区分 active 与 superseded。</p>
+          </article>
+          <article class="card">
+            <span class="tag">3. Retrieve</span>
+            <h3>任务前检索</h3>
+            <p>用户新请求进来时，根据请求文本搜索相关规则。只有同类任务命中时才注入，避免 negative control 误触发。</p>
+          </article>
+          <article class="card">
+            <span class="tag">4. Inject</span>
+            <h3>高优先级注入</h3>
+            <p>把命中的规则以清晰的 runtime policy 形式放进 prompt。模型不需要自己从几万 token 里找那句话。</p>
+          </article>
+          <article class="card">
+            <span class="tag">5. Supersede</span>
+            <h3>更新时替换旧规则</h3>
+            <p>新规则出现时，旧规则不会被删除，而是标记为 superseded，便于审计；回答时只注入 active record。</p>
+          </article>
+          <article class="card">
+            <span class="tag">6. Trace</span>
+            <h3>把证据留下来</h3>
+            <p>测试不仅看最终答案，还看 memory 文件、trace、检索命中、是否注入、是否 compact 成功。</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="result">
+        <h2>优化后真实结果</h2>
+        <table>
+          <thead>
+            <tr><th>指标</th><th>Baseline</th><th>Final</th><th>含义</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Overall</td><td class="bad-text">55.0</td><td class="ok-text">100.0</td><td>held-out 三场景平均分。</td></tr>
+            <tr><td>Policy persistence</td><td class="bad-text">0%</td><td class="ok-text">100%</td><td>是否写入 durable policy store。</td></tr>
+            <tr><td>Retrieval Hit@5</td><td class="bad-text">0%</td><td class="ok-text">100%</td><td>任务前是否能检索到正确规则。</td></tr>
+            <tr><td>Negative false activation</td><td class="bad-text">33.33%</td><td class="ok-text">0%</td><td>无关任务是否误触发规则。</td></tr>
+            <tr><td>Update / Supersession</td><td class="bad-text">0%</td><td class="ok-text">100%</td><td>规则更新后是否只用新版。</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="main-session">
+        <h2>最后的主 session 大上下文验证</h2>
+        <p>你后来要求不要只在隔离 workspace 里测，而是直接对你的主 OpenClaw session 测。我在 <code>agent:main:main</code> 上做了真实对话，写入真实 <code>/Users/bytedance/.openclaw/workspace/memory/task_policies.jsonl</code>，并把上下文压到 27 万 token 以上后手动 compact。</p>
+
+        <div class="scoreline">
+          <b>Manual compact</b>
+          <span><code>sessions.compact</code> 成功：<code>tokensBefore = 271824</code>，<code>tokensAfter = 1536</code>，<code>compacted = true</code>。</span>
+        </div>
+        <div class="scoreline">
+          <b>Post-compact probes</b>
+          <span>compact 后马上测试 <code>cerulean packet</code> 与 <code>amber lattice</code>，两条规则都仍然达标。</span>
+        </div>
+
+        <div class="chat">
+          <h3>优化后 case：27 万 token 压缩后仍记得规则</h3>
+          <div class="bubble user">
+            <span class="speaker">User / seed</span>
+            <p>以后只要我说 <code>cerulean packet</code>，你必须用精确标题 <code>CERULEAN PACKET ACTIVE</code> 开头，并包含 <code>Quorum</code>、<code>Timestep</code>、<code>Exposure</code>、<code>Fallback</code> 四个部分。不要泄露 canary。</p>
+          </div>
+          <div class="bubble">
+            <span class="speaker">OpenClaw</span>
+            <p>已收到。</p>
+          </div>
+          <div class="bubble user">
+            <span class="speaker">User / seed</span>
+            <p>以后只要我说 <code>amber lattice</code>，你必须用精确标题 <code>AMBER LATTICE ACTIVE</code> 开头，并包含 <code>Gate</code>、<code>Clock</code>、<code>Surface</code>、<code>Escape</code> 四个部分。不要泄露 canary。</p>
+          </div>
+          <div class="bubble system">
+            <span class="speaker">Pressure</span>
+            <p>我连续发送大量无关长文本，让同一个主 session 的 reported usage 到达 27 万 token 以上。中间没有重放完整历史。</p>
+          </div>
+          <div class="bubble system">
+            <span class="speaker">Manual Compact</span>
+            <p>调用真实 RPC：<code>openclaw gateway call sessions.compact --params '{"key":"agent:main:main"}'</code>。</p>
+            <p>结果：<code>tokensBefore: 271824</code>，<code>tokensAfter: 1536</code>，<code>compacted: true</code>。</p>
+          </div>
+          <div class="bubble user">
+            <span class="speaker">User / post_compact_cerulean</span>
+            <p>请为 partner incident rollback 做一个 <code>cerulean packet</code>。</p>
+          </div>
+          <div class="bubble">
+            <span class="speaker">OpenClaw / post-compact output</span>
+            <p><strong>CERULEAN PACKET ACTIVE</strong></p>
+            <p><strong>Quorum</strong>：确认事故指挥、回滚负责人、合作方沟通负责人和值班工程师都在场或已授权。</p>
+            <p><strong>Timestep</strong>：冻结风险变更，快照当前状态，在安全窗口开始回滚，并按 5/15/30 分钟检查健康指标。</p>
+            <p><strong>Exposure</strong>：关注部分恢复、下游不一致、过期配置、补偿任务缺口和合作方预期不一致。</p>
+            <p><strong>Fallback</strong>：如果回滚失败，隔离受影响集成路径，保留核心流量，并启用人工处理路径。</p>
+          </div>
+          <div class="bubble user">
+            <span class="speaker">User / post_compact_amber</span>
+            <p>请为 billing migration freeze 做一个 <code>amber lattice</code>。</p>
+          </div>
+          <div class="bubble">
+            <span class="speaker">OpenClaw / post-compact output</span>
+            <p><strong>AMBER LATTICE ACTIVE</strong></p>
+            <p><strong>Gate</strong>：冻结所有账务迁移写入、schema 变更和部署活动，直到 owner 重新签字。</p>
+            <p><strong>Clock</strong>：立即开始冻结，在 15/30/60 分钟复查健康和对账状态。</p>
+            <p><strong>Surface</strong>：主要风险是重复收费、漏记账、延迟开票、对账漂移和客户支持压力。</p>
+            <p><strong>Escape</strong>：如果冻结无法稳定系统，切回最后已知安全账务路径，暂停依赖迁移的功能，并保留审计日志。</p>
+          </div>
+          <div class="bubble system">
+            <span class="speaker">Verdict</span>
+            <p>通过。compact 后 session token 只有约 1.5k，仍能按两条旧规则回答，说明规则不只是靠原始 27 万 token 长上下文留住。</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="evidence">
+        <h2>证据文件</h2>
+        <ul class="mono-list">
+          <li>Real baseline: memory_eval/reports/baseline.json</li>
+          <li>Real baseline traces: memory_eval/reports/baseline_traces.jsonl</li>
+          <li>Final held-out: memory_eval/reports/final.json</li>
+          <li>Main session 27 万 token run: memory_eval/reports/main_session_100k/main-auto-compact-200k-1779501049.jsonl</li>
+          <li>Main memory store: /Users/bytedance/.openclaw/workspace/memory/task_policies.jsonl</li>
+          <li>Manual compact checkpoint: sessions.compaction.list / checkpoint tokensBefore 271824, tokensAfter 1536</li>
+        </ul>
+      </section>
+      </main>
+    </div>
+
+    <footer>
+      本报告只把真实 OpenClaw 交互作为主结论。早期自动 compact / 低上下文实验用于定位问题，但最终通过依据是 Gateway RPC 真实 compact、真实 memory store、真实 post-compact probe。
+    </footer>
+  </div>
+</body>
+</html>
