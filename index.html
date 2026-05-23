@@ -52,17 +52,20 @@
     }
 
     .toc {
-      position: fixed;
+      position: fixed !important;
       left: max(16px, calc((100vw - 1280px) / 2 + 16px));
-      top: 18px;
+      top: 24px;
+      bottom: 24px;
       width: 220px;
-      max-height: calc(100vh - 36px);
+      max-height: none;
       overflow-y: auto;
-      margin-top: 22px;
+      margin-top: 0;
       padding: 14px;
       background: rgba(255, 255, 255, 0.82);
       border: 1px solid var(--line);
       border-radius: 8px;
+      z-index: 50;
+      box-shadow: 0 10px 30px rgba(23, 32, 27, 0.08);
     }
 
     .toc-title {
