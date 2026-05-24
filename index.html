@@ -123,7 +123,7 @@
 
     .status-grid {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
       gap: 12px;
       margin: 30px 0 0;
     }
@@ -432,6 +432,7 @@
         <div class="stat"><span>Final</span><b class="ok-text">100.0</b><p>加入任务规则写入、检索、注入和 supersession 后。</p></div>
         <div class="stat"><span>Main Session Case</span><b>271k → 1.5k</b><p>真实主 session 手动 compact 后规则仍生效。</p></div>
         <div class="stat"><span>History Replay</span><b class="ok-text">False</b><p>测试请求不重放完整历史，只发送当前 turn。</p></div>
+        <div class="stat"><span>Cross Session</span><b class="ok-text">93.33*</b><p>上一版严格隔离口径的真实 Gateway heldout 分数；当前机制已按新取舍放宽。</p></div>
       </div>
     </header>
 
@@ -446,6 +447,7 @@
         <a href="#optimization">优化结构</a>
         <a href="#result">优化后结果</a>
         <a href="#main-session">27 万 token case</a>
+        <a href="#cross-session">跨 Session 验证</a>
         <a href="#evidence">证据文件</a>
       </nav>
 
@@ -465,29 +467,42 @@
    - forbidden
    - priority
    - scope
+   - scope_type = durable / session_only
+   - session_key
    - source_session
-   - status = active 或 superseded
+   - status = active / superseded / deleted
    - supersedes
+   - expires_at
    - created_at / updated_at
-3. 每次回答用户新任务前，根据当前用户请求检索 memory/task_policies.jsonl 中 status=active 的相关规则。
-4. 如果当前请求命中某条 active task policy，就把它作为高优先级 runtime instruction 注入最终 prompt，要求模型必须遵守 constraints，且不得触犯 forbidden。
-5. 如果用户更新同一个 task_trigger 的规则，不要让新旧规则同时生效；把旧 record 标记为 superseded，新 record 标记为 active，并记录 supersedes 关系。
-6. 增加 trace/debug 证据：记录是否写入了 policy、检索命中了哪些 policy、哪些 policy 被注入、是否发生 supersession。
-7. 测试要求：
+3. 每次回答用户新任务前，根据当前用户请求检索 memory/task_policies.jsonl 中 status=active 的相关规则。默认 durable 规则在当前 policy store 内共享；只有 session_only 规则需要原始 session_key 完全相同才使用，新 session 不得复用。
+   - superseded / deleted / expires_at 已过期的规则不得注入
+4. 检索时允许适度扩散触发：当前请求只要和 task_trigger 有明确关键词重叠，就可以触发相关规则。例如用户说 cutover announcement 时，也可以参考 cutover checklist 的流程约束；但完全无关任务仍不应触发。
+5. 如果当前请求命中某条 active 且 scope 允许的 task policy，就把它作为高优先级 runtime instruction 注入最终 prompt，要求模型必须遵守 constraints，且不得触犯 forbidden。
+6. 如果当前请求匹配到同 task_trigger 但 policy 已经 deleted、superseded，或者 session_only 规则不属于当前 session，不要静默忽略；请注入 negative guard，明确告诉模型“这些旧要求不能用于当前回答”，避免普通 memory 残留把旧格式带回来。
+7. 如果用户更新同一个 task_trigger 的 durable 规则，不要让新旧规则同时生效；把旧 record 标记为 superseded，新 record 标记为 active，并记录 supersedes 关系。
+8. 如果用户说 forget/delete/remove 某条规则，把匹配的 active record 标记为 deleted，并确保后续不再注入。
+9. 增加 trace/debug 证据：记录是否写入了 policy、检索命中了哪些 policy、哪些 policy 被注入、是否发生 supersession/delete、当前 session key 和 memory 文件路径是什么。
+10. 测试要求：
    - seed：用户声明规则
    - initial probe：马上做同类任务
    - distractors：插入长无关对话
    - compact：触发或手动执行真实 OpenClaw compact
    - delayed probe：compact 后再次做同类任务
-   - negative control：做相近但不应触发的任务，确保不会误用规则
+   - negative control：做完全无关任务，确保不会误用规则；相近任务允许适度继承流程
    - update：用户更新规则，确保旧规则 superseded，新规则 active
+   - delete：用户删除规则，确保后续不再使用
+   - cross-session：Session A 创建 durable 规则，Session B 用新 session 测试是否能复用；session_only 规则则必须在新 session 失效
+   - restart：Gateway 重启后，新 session 仍能从磁盘恢复 durable 规则
 
 验收标准：
-- memory/task_policies.jsonl 中有 active/superseded records
+- memory/task_policies.jsonl 中有 active/superseded/deleted records
 - compact 后同类任务仍能遵守 active rule
-- 无关任务不会过度触发
+- 完全无关任务不会过度触发；相近任务可以适度扩散触发
 - 更新后不再混用旧规则字段
-- trace 中能看到 write / retrieve / inject / supersede 的证据</div>
+- 删除后不再使用 deleted 规则
+- 跨 session 时，durable 规则能被新 session 复用；session_only 规则不能跨 session 泄漏
+- Gateway restart 后仍能从磁盘重新加载 durable 规则
+- trace 中能看到 write / retrieve / inject / supersede / delete 的证据</div>
       </section>
 
       <section id="context">
@@ -589,7 +604,7 @@
             <tr><td>distractors</td><td>插入长干扰文本，内容明确要求不要讨论规则。</td><td>把规则推远，模拟长对话。</td></tr>
             <tr><td>compact</td><td>对同一个 session 做真实 Gateway compact。</td><td>验证不是 scorer 自己清空上下文，也不是我手写摘要。</td></tr>
             <tr><td>delayed probe</td><td>compact 后再问同类任务。</td><td>看规则是否还能被找回。</td></tr>
-            <tr><td>negative control</td><td>问相近但不是同类的任务。</td><td>看规则会不会过度触发。</td></tr>
+            <tr><td>negative control</td><td>问完全无关的任务。</td><td>看规则会不会被无关请求误触发；相近任务允许适度继承流程。</td></tr>
             <tr><td>update</td><td>把旧规则改成新规则。</td><td>看系统是否能标记旧规则 superseded，只用新规则。</td></tr>
           </tbody>
         </table>
@@ -613,106 +628,35 @@
           </article>
         </div>
 
-        <table>
-          <thead>
-            <tr><th>失败类型</th><th>本次数量</th><th>具体含义</th><th>为什么重要</th></tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><code>WRITE_MISSING</code></td>
-              <td>3</td>
-              <td>用户声明规则后，workspace 里没有生成对应的 <code>memory/task_policies.jsonl</code> record，或 store 不存在。</td>
-              <td>说明规则只留在聊天历史里，不是 durable memory。长上下文、compact、换任务后都不可控。</td>
-            </tr>
-            <tr>
-              <td><code>RETRIEVAL_MISS</code></td>
-              <td>3</td>
-              <td>后续同类任务发生时，没有检索到应该命中的规则。</td>
-              <td>即使文件存在，如果回答前找不到规则，也无法保证模型会遵守。</td>
-            </tr>
-            <tr>
-              <td><code>STALE_RULE_USED</code></td>
-              <td>3</td>
-              <td>用户更新规则后，回答仍混入旧规则字段。</td>
-              <td>这是缺少 supersession 的典型表现：系统不知道哪条旧规则应该失效。</td>
-            </tr>
-            <tr>
-              <td><code>IGNORED_IN_OUTPUT</code></td>
-              <td>1</td>
-              <td>模型回答里没有按规则要求组织输出。例如要求以 <code>Assumptions</code> 开头，但它先写了其它句子。</td>
-              <td>说明仅靠自然语言承诺不够，模型可能理解规则但没有严格执行。</td>
-            </tr>
-            <tr>
-              <td><code>NOT_INJECTED</code></td>
-              <td>1</td>
-              <td>trace 中没有看到规则被注入到 prompt 的证据。</td>
-              <td>没有注入证据，就不能证明回答是由 durable policy 驱动，而可能只是模型碰巧记得。</td>
-            </tr>
-            <tr>
-              <td><code>OVER_TRIGGER</code></td>
-              <td>1</td>
-              <td>规则被错误套用到相近但不应触发的任务上。例如 rewrite 规则影响了 translate。</td>
-              <td>程序性记忆不只是“多记一点”，还必须知道什么时候不该用。</td>
-            </tr>
-          </tbody>
-        </table>
-
-        <div class="chat">
-          <h3>Baseline case：它没有稳定记住“数据分析必须先写 Assumptions”</h3>
-          <div class="bubble user">
-            <span class="speaker">User / seed_instruction</span>
-            <p>以后只要做 <code>data analysis</code>，你必须先写 <code>Assumptions</code>，然后再写 <code>Conclusions</code>。</p>
-          </div>
-          <div class="bubble">
-            <span class="speaker">OpenClaw</span>
-            <p>明白了。我会在任何数据分析中先说明假设，再给出结论。</p>
-          </div>
-          <div class="bubble user">
-            <span class="speaker">User / initial_probe</span>
-            <p>请对月度收入做一次 <code>data analysis</code>。</p>
-          </div>
-          <div class="bubble">
-            <span class="speaker">OpenClaw / baseline output</span>
-            <p>在分析月度收入之前，我需要数据。</p>
-            <p><strong>Assumptions:</strong> 你想要真实分析，而不是模板；月度收入可能包括趋势、环比、季节性和异常；目前没有数据和日期范围。</p>
-            <p>然后它给出需要上传 CSV、表格字段等说明。</p>
-          </div>
-          <div class="bubble system">
-            <span class="speaker">Scorer</span>
-            <p>错误：输出没有以 <code>Assumptions</code> 开头，因此命中 <code>IGNORED_IN_OUTPUT</code>。这个 case 的 immediate compliance 得 0。</p>
-          </div>
-          <div class="bubble system">
-            <span class="speaker">Trace / memory_probe</span>
-            <p><code>policy_store.exists = false</code>，<code>records = 0</code>，<code>retrieval_hit_at_5 = 0</code>。也就是说，规则没有被写入 durable store，后续只能靠 transcript 或 compact summary 碰运气。</p>
-          </div>
+        <div class="grid-2">
+          <article class="card">
+            <span class="tag">WRITE_MISSING</span>
+            <h3>规则没有变成可管理的 record</h3>
+            <p>baseline 里，用户说“以后做 X 必须按 Y 做”之后，这句话主要留在 transcript 里。workspace 下没有稳定生成 <code>memory/task_policies.jsonl</code>，也就没有 <code>id</code>、<code>task_trigger</code>、<code>constraints</code>、<code>status</code> 这类可审计字段。</p>
+            <p>这会导致一个根本问题：系统无法区分“普通聊天内容”和“未来每次都要执行的任务规则”。模型也许会在短上下文里答对，但这只是自然语言上下文的临时效果，不是 durable policy。</p>
+          </article>
+          <article class="card">
+            <span class="tag">RETRIEVAL_MISS</span>
+            <h3>任务发生时没有独立检索</h3>
+            <p>真正的程序性记忆应该在用户新请求进入时，先看当前任务是否命中某条规则，再把规则放进 prompt。baseline 没有这个任务前检索步骤，所以后续回答只能依赖模型自己从当前上下文里想起早先那句话。</p>
+            <p>一旦对话变长、compact 后原话被压缩、或者新 session 不带旧历史，模型就没有稳定入口去找这条规则。评分器因此会把它标为 <code>RETRIEVAL_MISS</code> 或 <code>NOT_INJECTED</code>。</p>
+          </article>
+          <article class="card">
+            <span class="tag">STALE_RULE_USED</span>
+            <h3>更新规则时没有失效机制</h3>
+            <p>用户更新规则时，baseline 只能在聊天历史里看到两段自然语言：“旧规则”和“新规则”。它没有把旧规则标记为 <code>superseded</code>，也没有只检索 <code>active</code> record 的机制。</p>
+            <p>结果是模型容易把新旧规则合并理解：既想遵守新要求，又把旧字段当成仍然有用的格式提示。这不是模型不懂中文，而是系统层面没有 lifecycle：不知道哪条规则已经被替换。</p>
+          </article>
+          <article class="card">
+            <span class="tag">NOT_INJECTED</span>
+            <h3>没有证据证明规则进入了最终 prompt</h3>
+            <p>一个回答看起来“碰巧遵守了规则”并不等于机制有效。评测除了看输出，还看 trace：有没有写入 store、有没有检索命中、有没有把 active policy 注入最终 prompt。</p>
+            <p>baseline 的问题是没有可追踪的 write / retrieve / inject 链路，所以即使某次输出正确，也无法证明它下次、compact 后、更新后仍然可靠。</p>
+          </article>
         </div>
 
         <div class="note bad">
-          <p>这个 baseline case 不是说 OpenClaw 完全不会理解规则。它能理解，并且有时能在普通上下文里继续遵守。但它没有把规则变成一个可检索、可更新、可审计的 record，所以评分器会认为它没有形成程序性记忆。</p>
-        </div>
-
-        <div class="chat">
-          <h3>Baseline case：更新规则后旧规则还残留</h3>
-          <div class="bubble user">
-            <span class="speaker">User / old rule</span>
-            <p>以后做 <code>weekly plan</code>，必须包含 <code>priority</code>、<code>deadline</code>、<code>blocker</code>、<code>next action</code>。</p>
-          </div>
-          <div class="bubble user">
-            <span class="speaker">User / update_instruction</span>
-            <p>更新一下：以后做 <code>weekly plan</code>，必须包含 <code>owner</code>、<code>due date</code>、<code>risk</code>。</p>
-          </div>
-          <div class="bubble user">
-            <span class="speaker">User / updated_probe</span>
-            <p>请给 mobile release 做一个周计划。</p>
-          </div>
-          <div class="bubble">
-            <span class="speaker">OpenClaw / baseline output</span>
-            <p>它同时输出了 <code>Owner</code>、<code>Due date</code>、<code>Risk</code>，也继续混入旧字段 <code>Priority</code>、<code>Deadline</code>、<code>Blocker</code>、<code>Next action</code>。</p>
-          </div>
-          <div class="bubble system">
-            <span class="speaker">Scorer</span>
-            <p>错误：<code>STALE_RULE_USED</code>。用户已经更新规则，但 baseline 没有 supersession 机制，旧规则没有被明确失效。</p>
-          </div>
+          <p><strong>关键结论：</strong>baseline 不是语言理解差，而是没有把“以后这类任务都要这么做”提升成结构化、可检索、可更新、可删除的程序性规则。它靠普通上下文工作，所以短期内可能看起来会记得；但一旦上下文变长、发生 compact、规则被更新，或者需要审计证据，就会暴露不稳定。</p>
         </div>
       </section>
 
@@ -839,6 +783,165 @@
         </div>
       </section>
 
+      <section id="cross-session">
+        <h2>跨 Session：换一个会话还记得吗？</h2>
+        <p>前面的 27 万 token case 证明：同一个长 session 被 compact 后，规则仍能通过 <code>task_policies.jsonl</code> 找回来。新的 PMR-Real-CrossSession 进一步测试：规则在 Session A 创建后，Session B/C/D 是否能按用户、workspace、scope 边界正确复用或拒绝复用。这个测试仍然走真实本地 OpenClaw Gateway，不使用模拟 agent。</p>
+
+        <div class="grid-3">
+          <article class="card">
+            <span class="tag">Baseline</span>
+            <h3><span class="bad-text">51.11 / 100</span></h3>
+            <p>关闭 <code>task-policy-memory</code> 插件后，跨 session 没有可审计的 durable policy store。白盒诊断分是 <code>0 / 30</code>。</p>
+          </article>
+          <article class="card">
+            <span class="tag">Final</span>
+            <h3><span class="ok-text">93.33 / 100</span></h3>
+            <p>上一版严格隔离口径下，启用 durable task-policy lane 后 heldout 跨 session 总分提升到 <code>93.33</code>。当前机制已按你的要求移除 user/workspace 隔离并放宽相近任务触发，重新跑分需要使用新口径。</p>
+          </article>
+          <article class="card">
+            <span class="tag">Only Failure</span>
+            <h3><span class="warn-text">UPDATE_MISS × 1</span></h3>
+            <p>唯一失败来自 <code>heldout_global_review</code> 的 post-update 模型请求超时。白盒记录显示新 policy 已写入并 supersede 旧 policy。</p>
+          </article>
+        </div>
+
+        <div class="note">
+          <p><strong>口径说明：</strong>下面的 <code>93.33</code> 是上一版“严格 user/workspace 隔离 + near-miss 不触发”的 heldout 结果。现在机制已经改成“durable 规则在当前 store 内共享 + 相近任务可适度扩散”，所以这部分分数只作为历史对照，不作为新机制的最终得分。</p>
+        </div>
+
+        <h3>这个测试到底怎么跑？</h3>
+        <p>每个场景都用显式 session key，且每次请求只发送当前 user turn，不把完整历史塞回去。Session A 负责创建规则；Session B 用新 session 测 durable 规则是否还能复用；session-only 场景则验证新 session 不应继续使用；中间还会做真实 <code>sessions.compact</code> 和真实 <code>openclaw gateway restart</code>。</p>
+
+        <table>
+          <thead>
+            <tr><th>阶段</th><th>真实动作</th><th>要证明什么</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Session A / seed</td><td>发送 “以后做 TASK_X 必须遵守 RULE_R”。</td><td>规则能被抽取并写入当前 workspace 的 <code>memory/task_policies.jsonl</code>。</td></tr>
+            <tr><td>Session B / same user</td><td>新 session 只问 TASK_X，不重复规则。</td><td>同用户同 scope 的 durable 规则能跨 session 复用。</td></tr>
+            <tr><td>Compaction probe</td><td>Session A 发送长干扰文本后调用真实 <code>sessions.compact</code>。</td><td>规则不是靠 Session A 原始聊天历史留住。</td></tr>
+            <tr><td>Restart probe</td><td>执行真实 <code>openclaw gateway restart</code> 后再问 TASK_X。</td><td>规则落盘后能跨 Gateway 进程重启恢复。</td></tr>
+            <tr><td>Other session probes</td><td>用不同 session key 问同一个任务。</td><td>durable 规则应该能被新 session 复用；不再把 user/workspace 作为隔离边界。</td></tr>
+            <tr><td>Update / delete / related task</td><td>更新规则、删除规则、问相近任务。</td><td>验证 supersession、deleted 状态，以及相近任务可以适度继承流程。</td></tr>
+          </tbody>
+        </table>
+
+        <div class="scoreline">
+          <b>Gateway endpoint</b>
+          <span><code>http://127.0.0.1:18789/v1/chat/completions</code>。最终 heldout 同时记录了 restart command、session keys、memory path、policy records 和 trace。</span>
+        </div>
+        <div class="scoreline">
+          <b>Session key example</b>
+          <span><code>agent:pmr1779527853heldout_workspace_cutover_seed:main:pmr-cross:user=u_heldout_alpha:workspace=ws_heldout_finance:project=proj_billing:heldout_workspace_cutover:seed</code></span>
+        </div>
+
+        <h3>跨 session 版优化多了什么？</h3>
+        <div class="note ok">
+          <p>单 session 版本只需要知道“这条规则是否 active”。跨 session 版本还必须知道“这条规则是不是 durable、是不是只在原 session 生效、是否已经被更新或删除”。这里不再把 user/workspace 当成隔离边界，规则默认在当前 policy store 内共享。</p>
+        </div>
+        <div class="grid-2">
+          <article class="card">
+            <span class="tag">Lifecycle Metadata</span>
+            <h3>把生命周期写进 record</h3>
+            <p>每条 policy 有 <code>scope_type</code>、<code>session_key</code>、<code>expires_at</code> 和 <code>status</code>。durable 规则跨 session 复用；session-only 规则只在原 session 使用；deleted/superseded 不再注入。</p>
+          </article>
+          <article class="card">
+            <span class="tag">Shared Retrieval</span>
+            <h3>检索时默认共享</h3>
+            <p>只要 policy 在当前 <code>task_policies.jsonl</code> 里是 active 且未过期，就可以被新 session 使用。唯一例外是 <code>session_only</code>，它必须 exact session key 相同。</p>
+          </article>
+          <article class="card">
+            <span class="tag">Deleted Guard</span>
+            <h3>删除后不只是不注入</h3>
+            <p>旧规则可能已经进入普通 memory。最终实现会在匹配到 deleted/superseded 或 session-only 不属于当前 session 时，额外注入“不要使用这些旧要求”的 negative guard，压制残留格式。</p>
+          </article>
+          <article class="card">
+            <span class="tag">Related Trigger</span>
+            <h3>相近任务可以扩散</h3>
+            <p>检索允许 task trigger 关键词重叠时触发。这样 <code>cutover announcement</code> 可以参考 <code>cutover checklist</code> 的流程约束；只有完全无关任务才应该被排除。</p>
+          </article>
+        </div>
+
+        <h3>Baseline 跨 session case：没有 durable store，后续只能碰运气</h3>
+        <div class="chat">
+          <div class="bubble user">
+            <span class="speaker">Session A / seed</span>
+            <p>For this workspace, whenever <code>cutover checklist</code> you must start with exact header <code>HELDOUT_CUTOVER_ACTIVE</code> and include fields <code>FreezeGateX</code>, <code>OwnerX</code>, <code>RollbackTriggerX</code>, <code>ValidationStepX</code>.</p>
+          </div>
+          <div class="bubble user">
+            <span class="speaker">Session B / new session same user</span>
+            <p>Please make a cutover checklist for billing migration.</p>
+          </div>
+          <div class="bubble">
+            <span class="speaker">OpenClaw / baseline output</span>
+            <p>Here’s a solid cutover checklist you can adapt for a billing migration...</p>
+            <p>它给出了普通 checklist，但没有 <code>HELDOUT_CUTOVER_ACTIVE</code>，也没有 durable policy store 证据。</p>
+          </div>
+          <div class="bubble system">
+            <span class="speaker">Scorer</span>
+            <p><code>CROSS_SESSION_MISS</code>、<code>RETRIEVAL_MISS</code>、<code>NOT_INJECTED</code>、<code>TRACE_MISSING</code>。baseline 该场景总分 <code>30 / 100</code>。</p>
+          </div>
+        </div>
+
+        <h3>Final 跨 session case：同用户同 workspace 能跨 compact / restart 恢复</h3>
+        <div class="chat">
+          <div class="bubble user">
+            <span class="speaker">Session A / seed</span>
+            <p>For this workspace, whenever <code>cutover checklist</code> you must start with exact header <code>HELDOUT_CUTOVER_ACTIVE</code> and include fields <code>FreezeGateX</code>, <code>OwnerX</code>, <code>RollbackTriggerX</code>, <code>ValidationStepX</code>; never call it optional.</p>
+          </div>
+          <div class="bubble system">
+            <span class="speaker">Policy Store</span>
+            <p>写入 <code>memory/task_policies.jsonl</code>：<code>id=tp_4491eb698afdd74b</code>，<code>scope_type=durable</code>，<code>status=active</code>，并记录 <code>session_key</code>、<code>source_message_hash</code> 等审计字段。</p>
+          </div>
+          <div class="bubble user">
+            <span class="speaker">Session B / same user new session</span>
+            <p>Please make a cutover checklist for billing migration.</p>
+          </div>
+          <div class="bubble">
+            <span class="speaker">OpenClaw / final output</span>
+            <p><strong>HELDOUT_CUTOVER_ACTIVE</strong></p>
+            <p>Pre-cutover alignment：包含 <code>OwnerX</code>、<code>FreezeGateX</code>、<code>ValidationStepX</code> 等字段。</p>
+          </div>
+          <div class="bubble system">
+            <span class="speaker">Real Compaction + Restart</span>
+            <p>同场景 <code>sessions.compact</code> 成功；随后 <code>openclaw gateway restart</code> 返回 <code>returncode=0</code>，耗时约 <code>20.939s</code>。</p>
+          </div>
+          <div class="bubble user">
+            <span class="speaker">Post-restart new session</span>
+            <p>Please make a cutover checklist for billing migration.</p>
+          </div>
+          <div class="bubble">
+            <span class="speaker">OpenClaw / post-restart output</span>
+            <p><strong>HELDOUT_CUTOVER_ACTIVE</strong></p>
+            <p>Billing Migration Cutover Checklist：规则仍然生效，说明 Gateway 重启后从磁盘 policy store 重新恢复。</p>
+          </div>
+          <div class="bubble user">
+            <span class="speaker">Negative controls</span>
+            <p>完全无关任务不会输出 <code>HELDOUT_CUTOVER_ACTIVE</code>；相近任务可以根据关键词适度继承 cutover 流程。</p>
+          </div>
+          <div class="bubble system">
+            <span class="speaker">Verdict</span>
+            <p><code>heldout_workspace_cutover</code> final 得分 <code>100 / 100</code>。durable 规则跨 session 生效；更新和删除都通过；新机制不再把 user/workspace 隔离作为目标。</p>
+          </div>
+        </div>
+
+        <h3>上一版 heldout 分数表</h3>
+        <table>
+          <thead>
+            <tr><th>场景</th><th>Scope</th><th>Baseline</th><th>Final</th><th>备注</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>heldout_global_review</code></td><td><code>global_user</code></td><td class="bad-text">53.33</td><td class="ok-text">90.00</td><td>唯一失败是 post-update 模型请求超时；policy 已成功 supersede。</td></tr>
+            <tr><td><code>heldout_session_only_summary</code></td><td><code>session_only</code></td><td>70.00</td><td class="ok-text">90.00</td><td>新 session 不复用 session-only 规则，符合预期。</td></tr>
+            <tr><td><code>heldout_workspace_cutover</code></td><td><code>workspace</code></td><td class="bad-text">30.00</td><td class="ok-text">100.00</td><td>跨 session、compact、restart、隔离、更新、删除全部通过。</td></tr>
+          </tbody>
+        </table>
+
+        <div class="note">
+          <p>这部分和前面的主 session 27 万 token case 互补：27 万 token case 证明“同 session compact 后还记得”；cross-session case 证明“换 session、重启 Gateway 后，durable 规则仍能从磁盘恢复；session-only 和 deleted/superseded 规则不会继续生效”。</p>
+        </div>
+      </section>
+
       <section id="evidence">
         <h2>证据文件</h2>
         <ul class="mono-list">
@@ -848,6 +951,10 @@
           <li>Main session 27 万 token run: memory_eval/reports/main_session_100k/main-auto-compact-200k-1779501049.jsonl</li>
           <li>Main memory store: /Users/bytedance/.openclaw/workspace/memory/task_policies.jsonl</li>
           <li>Manual compact checkpoint: sessions.compaction.list / checkpoint tokensBefore 271824, tokensAfter 1536</li>
+          <li>Cross-session report: memory_eval/PMR_CROSS_SESSION_REPORT.md</li>
+          <li>Cross-session baseline: memory_eval/reports/cross_session_baseline.json</li>
+          <li>Cross-session final: memory_eval/reports/cross_session_final.json</li>
+          <li>Cross-session traces: memory_eval/reports/cross_session_traces.jsonl</li>
         </ul>
       </section>
       </main>
